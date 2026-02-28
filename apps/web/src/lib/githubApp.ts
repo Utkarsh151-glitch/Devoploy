@@ -2,6 +2,7 @@ import { App } from '@octokit/app';
 import { Webhooks } from '@octokit/webhooks';
 import JSZip from 'jszip';
 import type { ClassifiedCiError } from 'ci-parser';
+import fs from 'fs';
 
 export interface WorkflowRunContext {
     installationId: number;
@@ -30,11 +31,25 @@ function requiredEnv(name: string): string {
     return value;
 }
 
+function resolveGithubPrivateKey(): string {
+    const fromPath = process.env.GITHUB_APP_PRIVATE_KEY_PATH;
+    if (fromPath) {
+        if (!fs.existsSync(fromPath)) {
+            throw new Error(`GITHUB_APP_PRIVATE_KEY_PATH file not found: ${fromPath}`);
+        }
+        return fs.readFileSync(fromPath, 'utf8');
+    }
+
+    const inline = requiredEnv('GITHUB_APP_PRIVATE_KEY');
+    // Support both escaped "\n" and literal PEM new lines.
+    return inline.replace(/\\n/g, '\n');
+}
+
 function getApp(): App {
     if (!appInstance) {
         appInstance = new App({
             appId: requiredEnv('GITHUB_APP_ID'),
-            privateKey: requiredEnv('GITHUB_APP_PRIVATE_KEY').replace(/\\n/g, '\n'),
+            privateKey: resolveGithubPrivateKey(),
             webhooks: {
                 secret: requiredEnv('GITHUB_WEBHOOK_SECRET'),
             },
