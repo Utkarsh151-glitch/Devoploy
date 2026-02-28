@@ -6,13 +6,14 @@ import generate from '@babel/generator';
 import * as t from '@babel/types';
 
 type CloudProvider = 'Vercel' | 'AWS' | 'Heroku' | 'GCP';
-type TechStack = 'Node' | 'Python' | 'Go' | 'Unknown';
+type TechStack = 'Node' | 'Python' | 'Go' | 'Static' | 'Unknown';
 interface AnalysisResult {
     stack: TechStack;
     entrypoint?: string;
     packageJsonPath?: string;
     isNextApp: boolean;
     issues: DetectedIssue[];
+    projectRoot: string;
 }
 
 interface DetectedIssue {
@@ -101,29 +102,38 @@ export async function analyzeAndFix(repoPath: string, targetCloud: CloudProvider
 }
 
 async function detectStackAndIssues(repoPath: string): Promise<AnalysisResult> {
-    const files = await fs.readdir(repoPath);
+    const candidateRoots = await discoverCandidateRoots(repoPath, 4);
+    const selectedRoot = await selectProjectRoot(candidateRoots);
+    if (!selectedRoot) {
+        return { stack: 'Unknown', isNextApp: false, issues: [], projectRoot: repoPath };
+    }
+
+    const files = await fs.readdir(selectedRoot);
     const issues: DetectedIssue[] = [];
-    const packageJsonPath = path.join(repoPath, 'package.json');
+    const packageJsonPath = path.join(selectedRoot, 'package.json');
     const hasPackageJson = files.includes('package.json');
-    const isNextApp = await fileExists(path.join(repoPath, 'app', 'page.tsx')) || await fileExists(path.join(repoPath, 'src', 'app', 'page.tsx'));
+    const isNextApp = await fileExists(path.join(selectedRoot, 'app', 'page.tsx')) || await fileExists(path.join(selectedRoot, 'src', 'app', 'page.tsx'));
 
     if (hasPackageJson) {
         const pkg = JSON.parse(await fs.readFile(packageJsonPath, 'utf8'));
         const fallbackEntrypoint = ['index.js', 'server.js', 'app.js'].find((file) => files.includes(file));
         const entrypoint = pkg.main || fallbackEntrypoint || 'index.js';
         await detectJsonIssues(packageJsonPath, pkg, issues);
-        await detectAstIssues(repoPath, entrypoint, isNextApp, issues);
-        return { stack: 'Node', entrypoint, packageJsonPath, isNextApp, issues };
+        await detectAstIssues(selectedRoot, entrypoint, isNextApp, issues);
+        return { stack: 'Node', entrypoint, packageJsonPath, isNextApp, issues, projectRoot: selectedRoot };
     }
 
     if (files.includes('requirements.txt') || files.includes('Pipfile')) {
-        return { stack: 'Python', entrypoint: 'app.py', isNextApp: false, issues };
+        return { stack: 'Python', entrypoint: 'app.py', isNextApp: false, issues, projectRoot: selectedRoot };
     }
     if (files.includes('go.mod')) {
-        return { stack: 'Go', entrypoint: 'main.go', isNextApp: false, issues };
+        return { stack: 'Go', entrypoint: 'main.go', isNextApp: false, issues, projectRoot: selectedRoot };
+    }
+    if (files.includes('index.html')) {
+        return { stack: 'Static', entrypoint: 'index.html', isNextApp: false, issues, projectRoot: selectedRoot };
     }
 
-    return { stack: 'Unknown', isNextApp: false, issues };
+    return { stack: 'Unknown', isNextApp: false, issues, projectRoot: selectedRoot };
 }
 
 async function detectJsonIssues(packageJsonPath: string, pkg: any, issues: DetectedIssue[]): Promise<void> {
@@ -239,7 +249,7 @@ async function applyJsonFixes(repoPath: string, stackInfo: AnalysisResult, chang
 async function applyAstFixes(repoPath: string, stackInfo: AnalysisResult, changes: FileChange[]): Promise<void> {
     if (stackInfo.stack !== 'Node' || !stackInfo.entrypoint) return;
 
-    const entryPath = path.join(repoPath, stackInfo.entrypoint);
+    const entryPath = path.join(stackInfo.projectRoot, stackInfo.entrypoint);
     if (await fileExists(entryPath)) {
         const before = await fs.readFile(entryPath, 'utf8');
         const ast = parseSource(before, entryPath);
@@ -294,7 +304,7 @@ async function applyAstFixes(repoPath: string, stackInfo: AnalysisResult, change
         }
     }
 
-    const nextPageCandidates = [path.join(repoPath, 'app', 'page.tsx'), path.join(repoPath, 'src', 'app', 'page.tsx')];
+    const nextPageCandidates = [path.join(stackInfo.projectRoot, 'app', 'page.tsx'), path.join(stackInfo.projectRoot, 'src', 'app', 'page.tsx')];
     for (const pagePath of nextPageCandidates) {
         if (!await fileExists(pagePath)) continue;
         const before = await fs.readFile(pagePath, 'utf8');
@@ -330,16 +340,19 @@ async function applyAstFixes(repoPath: string, stackInfo: AnalysisResult, change
 }
 
 async function injectCloudManifest(repoPath: string, config: AnalysisResult, targetCloud: CloudProvider, changes: FileChange[]): Promise<void> {
+    const baseRoot = config.projectRoot || repoPath;
     if (targetCloud === 'Vercel') {
-        const vercelPath = path.join(repoPath, 'vercel.json');
+        const vercelPath = path.join(baseRoot, 'vercel.json');
         const before = await readFileOrEmpty(vercelPath);
-        const vercelConfig = {
-            version: 2,
-            builds: config.stack === 'Node' ? [{ src: config.entrypoint, use: '@vercel/node' }] :
-                config.stack === 'Python' ? [{ src: config.entrypoint, use: '@vercel/python' }] :
-                    [{ src: config.entrypoint, use: '@vercel/go' }],
-            routes: [{ src: '/(.*)', dest: `/${config.entrypoint}` }],
-        };
+        const vercelConfig = config.stack === 'Static'
+            ? { version: 2, cleanUrls: true }
+            : {
+                version: 2,
+                builds: config.stack === 'Node' ? [{ src: config.entrypoint, use: '@vercel/node' }] :
+                    config.stack === 'Python' ? [{ src: config.entrypoint, use: '@vercel/python' }] :
+                        [{ src: config.entrypoint, use: '@vercel/go' }],
+                routes: [{ src: '/(.*)', dest: `/${config.entrypoint}` }],
+            };
         const after = `${JSON.stringify(vercelConfig, null, 2)}\n`;
         if (before !== after) {
             changes.push({ filePath: vercelPath, before, after });
@@ -348,12 +361,13 @@ async function injectCloudManifest(repoPath: string, config: AnalysisResult, tar
     }
 
     if (targetCloud === 'Heroku') {
-        const procPath = path.join(repoPath, 'Procfile');
+        const procPath = path.join(baseRoot, 'Procfile');
         const before = await readFileOrEmpty(procPath);
         let after = '';
         if (config.stack === 'Node') after = `web: node ${config.entrypoint}\n`;
         if (config.stack === 'Python') after = `web: gunicorn ${config.entrypoint?.replace('.py', ':app')}\n`;
-        if (config.stack === 'Go') after = `web: bin/${path.basename(repoPath)}\n`;
+        if (config.stack === 'Go') after = `web: bin/${path.basename(baseRoot)}\n`;
+        if (config.stack === 'Static') after = 'web: npx serve .\n';
         if (before !== after) {
             changes.push({ filePath: procPath, before, after });
         }
@@ -361,7 +375,7 @@ async function injectCloudManifest(repoPath: string, config: AnalysisResult, tar
     }
 
     if (targetCloud === 'AWS') {
-        const sstPath = path.join(repoPath, 'sst.config.ts');
+        const sstPath = path.join(baseRoot, 'sst.config.ts');
         const before = await readFileOrEmpty(sstPath);
         const after = `
 import { SSTConfig } from "sst";
@@ -416,6 +430,56 @@ async function applyChangesTransactionally(repoPath: string, changes: FileChange
     const rollbackPatchPath = path.join(rollbackDir, 'rollback.patch.json');
     await fs.writeFile(rollbackPatchPath, JSON.stringify(rollback, null, 2), 'utf8');
     return rollbackPatchPath;
+}
+
+async function discoverCandidateRoots(root: string, maxDepth: number): Promise<string[]> {
+    const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
+    const candidates: string[] = [];
+    const skipDirs = new Set(['.git', 'node_modules', '.next', 'dist', 'build', 'coverage']);
+
+    while (queue.length > 0) {
+        const current = queue.shift()!;
+        const entries = await fs.readdir(current.dir, { withFileTypes: true });
+        const names = new Set(entries.map((entry) => entry.name));
+
+        if (names.has('package.json') || names.has('requirements.txt') || names.has('Pipfile') || names.has('go.mod') || names.has('index.html')) {
+            candidates.push(current.dir);
+        }
+
+        if (current.depth >= maxDepth) continue;
+
+        for (const entry of entries) {
+            if (!entry.isDirectory()) continue;
+            if (skipDirs.has(entry.name)) continue;
+            queue.push({ dir: path.join(current.dir, entry.name), depth: current.depth + 1 });
+        }
+    }
+
+    return candidates;
+}
+
+async function selectProjectRoot(candidates: string[]): Promise<string | null> {
+    if (candidates.length === 0) return null;
+
+    const scored: Array<{ dir: string; score: number }> = [];
+    for (const dir of candidates) {
+        const files = new Set(await fs.readdir(dir));
+        let score = 0;
+        if (files.has('package.json')) score += 100;
+        if (files.has('requirements.txt') || files.has('Pipfile')) score += 80;
+        if (files.has('go.mod')) score += 70;
+        if (files.has('index.html')) score += 30;
+        if (await fileExists(path.join(dir, 'app', 'page.tsx'))) score += 40;
+        if (await fileExists(path.join(dir, 'src', 'app', 'page.tsx'))) score += 40;
+        if (await fileExists(path.join(dir, 'next.config.js')) || await fileExists(path.join(dir, 'next.config.ts'))) score += 30;
+        if (await fileExists(path.join(dir, 'vercel.json'))) score += 20;
+        // prefer shallower candidates if score ties
+        score -= dir.split(path.sep).length;
+        scored.push({ dir, score });
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0].dir;
 }
 
 function parseSource(source: string, filePath: string) {

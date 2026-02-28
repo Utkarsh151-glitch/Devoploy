@@ -60,7 +60,10 @@ export interface WorkflowFailureAnalysis {
     category: string;
     confidence: number;
     extracted_error: string;
+    original_log_snippet: string;
     suggested_fix_type: string;
+    rule_matched: string;
+    why_this_fix: string;
     created_at: string;
     updated_at: string;
 }
@@ -77,7 +80,10 @@ export interface UpsertWorkflowFailureAnalysisInput {
     category: string;
     confidence: number;
     extractedError: string;
+    originalLogSnippet: string;
     suggestedFixType: string;
+    ruleMatched: string;
+    whyThisFix: string;
 }
 
 export interface DocumentationSource {
@@ -113,4 +119,43 @@ export interface DocumentationChunkInput {
     tokenCount: number;
     embedding: number[];
     metadata?: Record<string, unknown>;
+}
+
+export interface DeploymentListFilters {
+    status?: DeploymentStatus;
+    repo?: string;
+    page?: number;
+    pageSize?: number;
+}
+
+export interface DeploymentListResult {
+    rows: Deployment[];
+    total: number;
+    page: number;
+    pageSize: number;
+}
+
+export interface DashboardSummary {
+    totalDeployments: number;
+    successRate: number;
+    failedCiRuns: number;
+    fixSuccessPercentage: number;
+}
+
+export interface RecentActivityItem {
+    id: string;
+    deployment_id: string;
+    original_repo: string;
+    status: DeploymentStatus;
+    message: string;
+    log_level: DeploymentLog['log_level'];
+    created_at: string;
+}
+
+export interface RepositorySummary {
+    repo: string;
+    lastDeploymentId: string;
+    lastStatus: DeploymentStatus;
+    lastUpdatedAt: string;
+    totalDeployments: number;
 }

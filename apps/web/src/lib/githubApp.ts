@@ -40,7 +40,10 @@ function resolveGithubPrivateKey(): string {
         return fs.readFileSync(fromPath, 'utf8');
     }
 
-    const inline = requiredEnv('GITHUB_APP_PRIVATE_KEY');
+    const inline = process.env.GITHUB_PRIVATE_KEY || process.env.GITHUB_APP_PRIVATE_KEY;
+    if (!inline) {
+        throw new Error('GITHUB_PRIVATE_KEY is required.');
+    }
     // Support both escaped "\n" and literal PEM new lines.
     return inline.replace(/\\n/g, '\n');
 }
@@ -274,17 +277,26 @@ export async function commentAnalysisSummary(
     contextualSuggestion?: string
 ): Promise<void> {
     const octokit = await getInstallationOctokit(context.installationId);
+    const confidencePercent = Math.round(classified.confidence * 100);
     await octokit.request('POST /repos/{owner}/{repo}/issues/{issue_number}/comments', {
         owner: context.owner,
         repo: context.repo,
         issue_number: prNumber,
         body: [
-            '### Deployment Analysis Summary',
-            `- Category: \`${classified.category}\``,
-            `- Confidence: \`${classified.confidence}\``,
-            `- Suggested fix type: \`${classified.suggestedFixType}\``,
+            `DevOps Intelligence detected failure category ${classified.category}.`,
+            `Applied fix ${classified.suggestedFixType}.`,
+            `Confidence ${confidencePercent}%.`,
             '',
-            '#### Extracted Error',
+            '### Deployment Analysis Summary',
+            `- Rule matched: \`${classified.explainability.ruleMatched}\``,
+            `- Why this fix: ${classified.explainability.whyThisFix}`,
+            '',
+            '#### Original Log Snippet',
+            '```',
+            classified.originalLogSnippet.slice(0, 4000),
+            '```',
+            '',
+            '#### Deduplicated Error Block',
             '```',
             classified.extractedError.slice(0, 4000),
             '```',

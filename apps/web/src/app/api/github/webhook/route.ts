@@ -100,48 +100,74 @@ async function handleWorkflowRun(payload: WorkflowRunPayload, delivery: string) 
         htmlUrl: payload.workflow_run.html_url,
     };
 
-    const rawLogs = await fetchWorkflowRunLogs(context);
-    const classified = classifyCiLog(rawLogs);
-    const contextChunks = await retrieveDocumentationContext(classified.extractedError, {
-        matchCount: 6,
-        metadataFilter: { repository: `${context.owner}/${context.repo}` },
-    }).catch(() => []);
-    const fallbackChunks = contextChunks.length > 0
-        ? contextChunks
-        : await retrieveDocumentationContext(classified.extractedError, { matchCount: 6 }).catch(() => []);
-    const contextualSuggestion = await generateContextualFixSuggestion({
-        ciError: classified.extractedError,
-        category: classified.category,
-        chunks: fallbackChunks.map((chunk) => ({ content: chunk.content, similarity: chunk.similarity })),
-    }).catch(() => 'Contextual fix suggestion unavailable (RAG retrieval/generation failed).');
+    let stage = 'fetch_logs';
+    try {
+        const rawLogs = await fetchWorkflowRunLogs(context);
 
-    await upsertWorkflowFailureAnalysis({
-        installationId: context.installationId,
-        repositoryOwner: context.owner,
-        repositoryName: context.repo,
-        workflowRunId: context.runId,
-        workflowName: context.workflowName,
-        headBranch: context.headBranch,
-        headSha: context.headSha,
-        htmlUrl: context.htmlUrl,
-        category: classified.category,
-        confidence: classified.confidence,
-        extractedError: classified.extractedError,
-        suggestedFixType: classified.suggestedFixType,
-    });
+        stage = 'classify_logs';
+        const classified = classifyCiLog(rawLogs);
 
-    const patchResult = await applyFixPatch(context, classified);
-    const prNumber = await openPullRequest(context, patchResult.branch, classified);
-    await commentAnalysisSummary(context, prNumber, classified, contextualSuggestion);
+        stage = 'retrieve_rag_context';
+        const contextChunks = await retrieveDocumentationContext(classified.extractedError, {
+            matchCount: 6,
+            metadataFilter: { repository: `${context.owner}/${context.repo}` },
+        }).catch(() => []);
+        const fallbackChunks = contextChunks.length > 0
+            ? contextChunks
+            : await retrieveDocumentationContext(classified.extractedError, { matchCount: 6 }).catch(() => []);
+        const contextualSuggestion = await generateContextualFixSuggestion({
+            ciError: classified.extractedError,
+            category: classified.category,
+            chunks: fallbackChunks.map((chunk) => ({ content: chunk.content, similarity: chunk.similarity })),
+        }).catch(() => 'Contextual fix suggestion unavailable (RAG retrieval/generation failed).');
 
-    return NextResponse.json({
-        ok: true,
-        delivery,
-        workflowRunId: context.runId,
-        category: classified.category,
-        branch: patchResult.branch,
-        prNumber,
-    });
+        stage = 'persist_analysis';
+        await upsertWorkflowFailureAnalysis({
+            installationId: context.installationId,
+            repositoryOwner: context.owner,
+            repositoryName: context.repo,
+            workflowRunId: context.runId,
+            workflowName: context.workflowName,
+            headBranch: context.headBranch,
+            headSha: context.headSha,
+            htmlUrl: context.htmlUrl,
+            category: classified.category,
+            confidence: classified.confidence,
+            extractedError: classified.extractedError,
+            originalLogSnippet: classified.originalLogSnippet,
+            suggestedFixType: classified.suggestedFixType,
+            ruleMatched: classified.explainability.ruleMatched,
+            whyThisFix: classified.explainability.whyThisFix,
+        });
+
+        stage = 'apply_patch';
+        const patchResult = await applyFixPatch(context, classified);
+
+        stage = 'open_pull_request';
+        const prNumber = await openPullRequest(context, patchResult.branch, classified);
+
+        stage = 'comment_pull_request';
+        await commentAnalysisSummary(context, prNumber, classified, contextualSuggestion);
+
+        return NextResponse.json({
+            ok: true,
+            delivery,
+            workflowRunId: context.runId,
+            category: classified.category,
+            branch: patchResult.branch,
+            prNumber,
+        });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown workflow_run processing error';
+        return NextResponse.json(
+            {
+                error: message,
+                stage,
+                workflowRunId: context.runId,
+            },
+            { status: 500 }
+        );
+    }
 }
 
 async function handlePullRequest(payload: PullRequestPayload, delivery: string) {

@@ -1,5 +1,4 @@
-import dotenv from 'dotenv';
-dotenv.config();
+import 'dotenv/config';
 
 import { cloneRepository } from './cloner/cloneRepo';
 import { analyzeRepository, applyFixes, revertRollbackPatch } from './engine/analyzeAndFix';
@@ -27,11 +26,25 @@ async function processDeployment(deploymentId: string): Promise<void> {
         console.log(`\n=== Processing Deployment ${deploymentId} ===`);
         await updateDeploymentStatus(deploymentId, 'cloning');
         await appendDeploymentLog(deploymentId, 'Cloning repository');
-        repoPath = await cloneRepository(deployment.original_repo, process.env.GITHUB_TOKEN);
+        repoPath = await cloneRepository(deployment.original_repo, process.env.GITHUB_TOKEN, {
+            onAttemptLog: async (attempt) => {
+                await appendDeploymentLog(deploymentId, JSON.stringify(attempt), attempt.status === 'failed' ? 'WARN' : 'INFO');
+            },
+        });
 
         await updateDeploymentStatus(deploymentId, 'analyzing');
         await appendDeploymentLog(deploymentId, 'Analyzing repository');
         const analysis = await analyzeRepository(repoPath);
+        await appendDeploymentLog(
+            deploymentId,
+            `Detected stack=${analysis.stack}, projectRoot=${analysis.projectRoot}, entrypoint=${analysis.entrypoint ?? 'n/a'}`
+        );
+        if (analysis.issues.length > 0) {
+            await appendDeploymentLog(
+                deploymentId,
+                `Detected issues: ${analysis.issues.map((issue) => issue.type).join(', ')}`
+            );
+        }
 
         await updateDeploymentStatus(deploymentId, 'fixing');
         await appendDeploymentLog(deploymentId, `Applying ${deployment.target_cloud} fixes for ${analysis.stack}`);
@@ -71,12 +84,18 @@ async function processDeployment(deploymentId: string): Promise<void> {
         await updateDeploymentStatus(deploymentId, 'failed', { error_message: message }).catch(() => undefined);
         await appendDeploymentLog(deploymentId, message, 'ERROR').catch(() => undefined);
         console.error(`=== Failed Deployment ${deploymentId} ===`, error);
-        throw error;
+        throw error instanceof Error ? error : new Error(message);
     }
 }
 
 const worker = createDeploymentWorker(async (job) => {
-    await processDeployment(job.data.deploymentId);
+    try {
+        await processDeployment(job.data.deploymentId);
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown job handler error';
+        console.error(`[Worker] Job handler caught error for deployment ${job.data.deploymentId}: ${message}`);
+        throw error instanceof Error ? error : new Error(message);
+    }
 });
 
 worker.on('completed', (job) => {

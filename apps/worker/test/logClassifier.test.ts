@@ -17,6 +17,18 @@ test('extracts error blocks from raw logs', () => {
     assert.match(blocks[0].text, /Cannot find module/i);
 });
 
+test('deduplicates repeated error lines inside extracted block', () => {
+    const log = [
+        'Error: Cannot find module "dotenv-safe"',
+        'Error: Cannot find module "dotenv-safe"',
+        'Error: Cannot find module "dotenv-safe"',
+    ].join('\n');
+
+    const blocks = extractErrorBlocks(log);
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].text.split('\n').length, 1);
+});
+
 test('classifies NODE_VERSION_MISMATCH', () => {
     const result = classifyCiLog('npm ERR! The engine "node" is incompatible with this module. Expected version ">=20".');
     assert.equal(result.category, 'NODE_VERSION_MISMATCH');
@@ -67,5 +79,8 @@ test('returns structured shape', () => {
     assert.equal(typeof result.category, 'string');
     assert.equal(typeof result.confidence, 'number');
     assert.equal(typeof result.extractedError, 'string');
+    assert.equal(typeof result.originalLogSnippet, 'string');
     assert.equal(typeof result.suggestedFixType, 'string');
+    assert.equal(typeof result.explainability.ruleMatched, 'string');
+    assert.equal(typeof result.explainability.whyThisFix, 'string');
 });
