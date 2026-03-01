@@ -8,6 +8,7 @@ import {
 
 const EMBEDDING_MODEL = process.env.RAG_EMBEDDING_MODEL || 'text-embedding-3-small';
 const CHAT_MODEL = process.env.RAG_CHAT_MODEL || 'gpt-4.1-mini';
+const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL;
 
 let openaiClient: OpenAI | null = null;
 
@@ -17,7 +18,10 @@ function getOpenAI(): OpenAI {
         throw new Error('OPENAI_API_KEY is required for documentation RAG.');
     }
     if (!openaiClient) {
-        openaiClient = new OpenAI({ apiKey });
+        openaiClient = new OpenAI({
+            apiKey,
+            baseURL: OPENAI_BASE_URL || undefined,
+        });
     }
     return openaiClient;
 }
@@ -134,26 +138,26 @@ export async function generateContextualFixSuggestion(input: {
         .map((chunk, i) => `Context ${i + 1} (similarity ${chunk.similarity.toFixed(3)}):\n${chunk.content}`)
         .join('\n\n');
 
-    const completion = await client.responses.create({
+    const prompt = [
+        `CI failure category: ${input.category}`,
+        `CI extracted error:\n${input.ciError}`,
+        `Relevant documentation:\n${context}`,
+        'Produce: root cause, exact fix steps, and verification checklist.',
+    ].join('\n\n');
+
+    // Prefer Chat Completions for broad compatibility with OpenAI-compatible providers.
+    const completion = await client.chat.completions.create({
         model: CHAT_MODEL,
-        input: [
+        temperature: 0.2,
+        messages: [
             {
                 role: 'system',
                 content:
                     'You are a senior DevOps engineer. Use only provided documentation context. Return concise actionable fix steps.',
             },
-            {
-                role: 'user',
-                content: [
-                    `CI failure category: ${input.category}`,
-                    `CI extracted error:\n${input.ciError}`,
-                    `Relevant documentation:\n${context}`,
-                    'Produce: root cause, exact fix steps, and verification checklist.',
-                ].join('\n\n'),
-            },
+            { role: 'user', content: prompt },
         ],
-        temperature: 0.2,
     });
 
-    return completion.output_text?.trim() || 'Unable to generate contextual fix suggestion.';
+    return completion.choices?.[0]?.message?.content?.trim() || 'Unable to generate contextual fix suggestion.';
 }
