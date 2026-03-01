@@ -66,6 +66,9 @@ async function processDeployment(deploymentId: string): Promise<void> {
             await appendDeploymentLog(deploymentId, `AI fix pass skipped: ${aiResult.reason ?? 'disabled'}`, 'INFO');
         } else if (!aiResult.applied) {
             const noChangeReason = aiResult.reason ?? aiResult.summary ?? 'no-op';
+            if (aiResult.summary) {
+                await appendDeploymentLog(deploymentId, `AI fix summary: ${aiResult.summary}`);
+            }
             await appendDeploymentLog(deploymentId, `AI fix pass finished with no changes: ${noChangeReason}`, 'INFO');
         } else {
             await appendDeploymentLog(deploymentId, `AI fix summary: ${aiResult.summary}`);

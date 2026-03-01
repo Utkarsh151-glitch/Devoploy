@@ -118,6 +118,16 @@ export async function getDeploymentByFixedBranch(branch: string): Promise<Deploy
     return result.rows[0] ?? null;
 }
 
+export async function deleteDeploymentById(id: string): Promise<boolean> {
+    assertDatabaseEnv();
+    const pool = getPool();
+    const result = await pool.query<{ id: string }>(
+        'delete from deployments where id = $1 returning id',
+        [id]
+    );
+    return Boolean(result.rows[0]?.id);
+}
+
 export async function listDeployments(filters: DeploymentListFilters = {}): Promise<DeploymentListResult> {
     assertDatabaseEnv();
     const pool = getPool();

@@ -1,21 +1,21 @@
 import type { DeploymentStatus } from 'database';
 
 const colorByStatus: Record<DeploymentStatus, string> = {
-    queued: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
-    cloning: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
-    analyzing: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
-    fixing: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
-    pushing: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
-    completed: 'bg-green-500/15 text-green-300 border-green-500/30',
-    deploying: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
-    deployed: 'bg-green-500/15 text-green-300 border-green-500/30',
-    deployment_failed: 'bg-red-500/15 text-red-300 border-red-500/30',
-    failed: 'bg-red-500/15 text-red-300 border-red-500/30',
+    queued: 'border-blue-400/30 bg-blue-500/15 text-blue-200 status-glow-info',
+    cloning: 'border-blue-400/30 bg-blue-500/15 text-blue-200 status-glow-info',
+    analyzing: 'border-blue-400/30 bg-blue-500/15 text-blue-200 status-glow-info',
+    fixing: 'border-amber-400/30 bg-amber-500/15 text-amber-200 status-glow-warning',
+    pushing: 'border-amber-400/30 bg-amber-500/15 text-amber-200 status-glow-warning',
+    completed: 'border-emerald-400/30 bg-emerald-500/15 text-emerald-200 status-glow-success',
+    deploying: 'border-blue-400/30 bg-blue-500/15 text-blue-200 status-glow-info',
+    deployed: 'border-emerald-400/30 bg-emerald-500/15 text-emerald-200 status-glow-success',
+    deployment_failed: 'border-rose-400/30 bg-rose-500/15 text-rose-200 status-glow-error',
+    failed: 'border-rose-400/30 bg-rose-500/15 text-rose-200 status-glow-error',
 };
 
 export function StatusBadge({ status }: { status: DeploymentStatus }) {
     return (
-        <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${colorByStatus[status]}`}>
+        <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${colorByStatus[status]}`}>
             {status}
         </span>
     );

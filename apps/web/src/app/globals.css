@@ -6,17 +6,63 @@
 }
 
 :root {
-  --background: #0b0f14;
-  --foreground: #e8edf3;
+  --background: #070a12;
+  --surface: #0d1324;
+  --surface-2: #111a2f;
+  --foreground: #e6ebf8;
+  --muted: #94a3c5;
+  --border: rgba(148, 163, 197, 0.15);
+  --emerald: #10b981;
+  --amber: #f59e0b;
+  --rose: #f43f5e;
+  --blue: #3b82f6;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), sans-serif;
+  min-height: 100vh;
+  background-image:
+    radial-gradient(55rem 40rem at 5% -5%, rgba(56, 189, 248, 0.14), transparent 55%),
+    radial-gradient(45rem 30rem at 95% 0%, rgba(59, 130, 246, 0.12), transparent 50%),
+    linear-gradient(180deg, #070a12 0%, #060912 100%);
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #3b4252 #111827;
+  scrollbar-color: rgba(148, 163, 197, 0.4) transparent;
+}
+
+.card-surface {
+  background: linear-gradient(180deg, rgba(17, 26, 47, 0.75), rgba(13, 19, 36, 0.75));
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 30px rgba(3, 8, 21, 0.4);
+}
+
+.glass-nav {
+  background: rgba(9, 14, 28, 0.68);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border);
+}
+
+.focus-ring {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.45);
+}
+
+.status-glow-success {
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 20px rgba(16, 185, 129, 0.2);
+}
+
+.status-glow-warning {
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.35), 0 0 20px rgba(245, 158, 11, 0.2);
+}
+
+.status-glow-error {
+  box-shadow: 0 0 0 1px rgba(244, 63, 94, 0.35), 0 0 20px rgba(244, 63, 94, 0.2);
+}
+
+.status-glow-info {
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.35), 0 0 20px rgba(59, 130, 246, 0.2);
 }

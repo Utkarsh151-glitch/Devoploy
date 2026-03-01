@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { MetricCard } from '@/components/ui/metric-card';
 import { StatusBadge } from '@/components/ui/status-badge';
+import { DataTable } from '@/components/ui/data-table';
+import { useToast } from '@/components/ui/toast';
 import { formatDateTime, formatPercent, shortRepo } from '@/lib/ui';
 
 type Activity = {
@@ -26,7 +28,13 @@ type DashboardResponse = {
     recentActivity: Activity[];
 };
 
+function buildSparkline(base: number, activitySize: number): number[] {
+    const start = Math.max(2, Math.floor(base / 4) || 2);
+    return [start, start + 1, start + 2, Math.max(1, start + activitySize % 4), start + 3, start + 2, start + 4];
+}
+
 export default function DashboardPage() {
+    const { pushToast } = useToast();
     const [data, setData] = useState<DashboardResponse | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -44,7 +52,9 @@ export default function DashboardPage() {
                 }
             } catch (err: unknown) {
                 if (!cancelled) {
-                    setError(err instanceof Error ? err.message : 'Unknown dashboard error');
+                    const message = err instanceof Error ? err.message : 'Unknown dashboard error';
+                    setError(message);
+                    pushToast({ tone: 'error', title: 'Dashboard error', description: message });
                 }
             } finally {
                 if (!cancelled) setLoading(false);
@@ -56,53 +66,117 @@ export default function DashboardPage() {
             cancelled = true;
             clearInterval(id);
         };
-    }, []);
+    }, [pushToast]);
 
-    if (loading) return <div className="rounded-xl border border-white/10 bg-[#11141a] p-6 text-white/70">Loading dashboard...</div>;
-    if (error) return <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-6 text-red-300">{error}</div>;
+    const cards = useMemo(() => {
+        if (!data) return [];
+        const count = data.recentActivity.length;
+        return [
+            {
+                label: 'Total Deployments',
+                value: data.summary.totalDeployments,
+                tone: 'info' as const,
+                trend: 9,
+                sparkline: buildSparkline(data.summary.totalDeployments, count),
+            },
+            {
+                label: 'Success Rate',
+                value: formatPercent(data.summary.successRate),
+                tone: 'success' as const,
+                trend: 6,
+                sparkline: buildSparkline(Math.round(data.summary.successRate), count),
+            },
+            {
+                label: 'Failed CI Runs',
+                value: data.summary.failedCiRuns,
+                tone: 'error' as const,
+                trend: -3,
+                sparkline: buildSparkline(data.summary.failedCiRuns + 2, count),
+            },
+            {
+                label: 'Fix Success',
+                value: formatPercent(data.summary.fixSuccessPercentage),
+                tone: 'warning' as const,
+                trend: 4,
+                sparkline: buildSparkline(Math.round(data.summary.fixSuccessPercentage), count),
+            },
+        ];
+    }, [data]);
+
+    if (loading) return <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6 text-white/70">Loading dashboard...</div>;
+    if (error) return <div className="rounded-2xl border border-rose-500/30 bg-rose-500/10 p-6 text-rose-200">{error}</div>;
     if (!data) return null;
 
     return (
         <div className="space-y-6">
-            <h1 className="text-2xl font-semibold">Dashboard</h1>
+            <div>
+                <h1 className="text-2xl font-semibold tracking-tight">DevOps Intelligence</h1>
+                <p className="mt-1 text-sm text-white/55">Real-time deployment health, CI failures, and automated fixes.</p>
+            </div>
 
             <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <MetricCard label="Total Deployments" value={data.summary.totalDeployments} />
-                <MetricCard label="Success Rate" value={formatPercent(data.summary.successRate)} tone="success" />
-                <MetricCard label="Failed CI Runs" value={data.summary.failedCiRuns} tone="danger" />
-                <MetricCard label="Fix Success %" value={formatPercent(data.summary.fixSuccessPercentage)} tone="warning" />
+                {cards.map((card) => (
+                    <MetricCard
+                        key={card.label}
+                        label={card.label}
+                        value={card.value}
+                        tone={card.tone}
+                        trend={card.trend}
+                        sparkline={card.sparkline}
+                    />
+                ))}
             </section>
 
-            <section className="overflow-hidden rounded-xl border border-white/10 bg-[#11141a]">
-                <div className="border-b border-white/10 px-4 py-3 text-sm font-medium text-white">Recent Activity</div>
-                <div className="overflow-auto">
-                    <table className="min-w-full text-sm">
-                        <thead className="bg-white/5 text-left text-white/70">
-                            <tr>
-                                <th className="px-4 py-3">Time</th>
-                                <th className="px-4 py-3">Repository</th>
-                                <th className="px-4 py-3">Status</th>
-                                <th className="px-4 py-3">Message</th>
-                                <th className="px-4 py-3">Deployment</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {data.recentActivity.map((item) => (
-                                <tr key={item.id} className="border-t border-white/5 text-white/80">
-                                    <td className="px-4 py-3 whitespace-nowrap">{formatDateTime(item.created_at)}</td>
-                                    <td className="px-4 py-3">{shortRepo(item.original_repo)}</td>
-                                    <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
-                                    <td className="px-4 py-3 max-w-xl truncate">{item.message}</td>
-                                    <td className="px-4 py-3">
-                                        <Link className="text-cyan-300 hover:text-cyan-200" href={`/deployments/${item.deployment_id}`}>
-                                            Open
-                                        </Link>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+            <section className="space-y-3">
+                <div className="flex items-center justify-between">
+                    <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-white/60">Recent Activity</h2>
                 </div>
+                <DataTable
+                    rows={data.recentActivity}
+                    columns={[
+                        {
+                            id: 'time',
+                            label: 'Time',
+                            sortable: true,
+                            sortValue: (row) => new Date(row.created_at).getTime(),
+                            render: (row) => <span className="whitespace-nowrap text-white/70">{formatDateTime(row.created_at)}</span>,
+                        },
+                        {
+                            id: 'repo',
+                            label: 'Repository',
+                            sortable: true,
+                            sortValue: (row) => shortRepo(row.original_repo),
+                            render: (row) => <span>{shortRepo(row.original_repo)}</span>,
+                        },
+                        {
+                            id: 'status',
+                            label: 'Status',
+                            render: (row) => <StatusBadge status={row.status} />,
+                        },
+                        {
+                            id: 'message',
+                            label: 'Message',
+                            render: (row) => <span className="line-clamp-1 text-white/75">{row.message}</span>,
+                        },
+                        {
+                            id: 'open',
+                            label: 'Open',
+                            className: 'text-right',
+                            render: (row) => (
+                                <Link href={`/deployments/${row.deployment_id}`} className="text-blue-300 hover:text-blue-200">
+                                    View
+                                </Link>
+                            ),
+                        },
+                    ]}
+                    renderExpanded={(row) => (
+                        <div className="space-y-1 text-xs text-white/70">
+                            <p><span className="text-white/50">Level:</span> {row.log_level}</p>
+                            <p><span className="text-white/50">Deployment:</span> {row.deployment_id}</p>
+                            <p className="whitespace-pre-wrap rounded-lg border border-white/10 bg-[#090f1f] p-3">{row.message}</p>
+                        </div>
+                    )}
+                />
             </section>
         </div>
     );

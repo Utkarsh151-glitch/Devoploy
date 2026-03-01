@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import {
+    deleteDeploymentById,
     getDeploymentById,
     getDeploymentLogs,
     getLatestWorkflowAnalysisForRepo,
 } from 'database';
 import { parseGitHubRepo } from '@/lib/repo';
+import { getDeploymentQueue } from '@/lib/queue';
 
 export const runtime = 'nodejs';
 
@@ -50,6 +52,42 @@ export async function GET(_req: Request, context: { params: Promise<{ id: string
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown deployment detail error';
+        return NextResponse.json({ error: message }, { status: 500 });
+    }
+}
+
+export async function DELETE(_req: Request, context: { params: Promise<{ id: string }> }) {
+    try {
+        const { id } = await context.params;
+        const deployment = await getDeploymentById(id);
+        if (!deployment) {
+            return NextResponse.json({ error: 'Deployment not found' }, { status: 404 });
+        }
+
+        // Best-effort cleanup of queued jobs for this deployment.
+        try {
+            const queue = getDeploymentQueue();
+            const jobs = await queue.getJobs(
+                ['waiting', 'delayed', 'paused', 'prioritized', 'completed', 'failed'],
+                0,
+                1000
+            );
+            const matches = jobs.filter((job) => job.data?.deploymentId === id);
+            for (const job of matches) {
+                await job.remove().catch(() => undefined);
+            }
+        } catch {
+            // Ignore queue cleanup failures and continue with deletion.
+        }
+
+        const deleted = await deleteDeploymentById(id);
+        if (!deleted) {
+            return NextResponse.json({ error: 'Failed to delete deployment' }, { status: 500 });
+        }
+
+        return NextResponse.json({ ok: true, deletedId: id });
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown deployment delete error';
         return NextResponse.json({ error: message }, { status: 500 });
     }
 }

@@ -107,7 +107,7 @@ export default function DeploymentDetailPage() {
     if (!data) return null;
 
     const { deployment, analysis } = data;
-    const canRetry = ['failed', 'deployment_failed'].includes(deployment.status);
+    const canRetry = ['failed', 'deployment_failed', 'queued'].includes(deployment.status);
     const canDeploy = ['completed', 'deployment_failed', 'deployed'].includes(deployment.status);
 
     return (
