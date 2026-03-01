@@ -48,7 +48,8 @@ export async function runGitCommand(options: GitCommandOptions): Promise<GitComm
 
             child.on('error', (error) => {
                 if ((error as Error).name === 'AbortError') {
-                    reject(new Error(`git ${options.args.join(' ')} timed out after ${timeoutMs}ms`));
+                    const safeArgs = options.args.map((arg) => redactSecrets(arg));
+                    reject(new Error(`git ${safeArgs.join(' ')} timed out after ${timeoutMs}ms`));
                     return;
                 }
                 reject(error);

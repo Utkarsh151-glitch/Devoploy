@@ -16,6 +16,9 @@ type DetailResponse = {
     analysis: any | null;
     diffPreview: string;
     fixApplied: string;
+    aiDiffPreview: string;
+    aiFixSummary: string;
+    aiChangedFiles: string;
 };
 
 export default function DeploymentDetailPage() {
@@ -25,6 +28,7 @@ export default function DeploymentDetailPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [retrying, setRetrying] = useState(false);
+    const [deploying, setDeploying] = useState(false);
     const [modalOpen, setModalOpen] = useState(false);
 
     useEffect(() => {
@@ -82,12 +86,29 @@ export default function DeploymentDetailPage() {
         }
     };
 
+    const handleDeploy = async () => {
+        setDeploying(true);
+        setError('');
+        try {
+            const response = await fetch(`/api/deployments/${id}/deploy`, { method: 'POST' });
+            const json = await response.json();
+            if (!response.ok) throw new Error(json?.error || 'Deploy failed');
+            const refreshed = await fetch(`/api/deployments/${id}`, { cache: 'no-store' }).then((r) => r.json());
+            setData(refreshed);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Deploy failed');
+        } finally {
+            setDeploying(false);
+        }
+    };
+
     if (loading) return <div className="rounded-xl border border-white/10 bg-[#11141a] p-6 text-white/70">Loading deployment detail...</div>;
     if (error) return <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-6 text-red-300">{error}</div>;
     if (!data) return null;
 
     const { deployment, analysis } = data;
     const canRetry = ['failed', 'deployment_failed'].includes(deployment.status);
+    const canDeploy = ['completed', 'deployment_failed', 'deployed'].includes(deployment.status);
 
     return (
         <div className="space-y-6">
@@ -98,6 +119,19 @@ export default function DeploymentDetailPage() {
                 </div>
                 <div className="flex items-center gap-3">
                     <StatusBadge status={deployment.status} />
+                    <a
+                        href={`/api/deployments/${id}/report`}
+                        className="rounded-md border border-white/20 bg-white/5 px-3 py-1.5 text-sm text-white hover:bg-white/10"
+                    >
+                        Download Report
+                    </a>
+                    <button
+                        onClick={handleDeploy}
+                        disabled={!canDeploy || deploying}
+                        className="rounded-md border border-green-500/35 bg-green-500/10 px-3 py-1.5 text-sm text-green-200 disabled:opacity-40"
+                    >
+                        {deploying ? 'Deploying...' : 'Deploy'}
+                    </button>
                     <button
                         onClick={handleRetry}
                         disabled={!canRetry || retrying}
@@ -133,6 +167,13 @@ export default function DeploymentDetailPage() {
                             <p>Before CI Status: <span className="text-red-300">failed</span></p>
                             <p>After CI Status: <span className="text-green-300">{deployment.status}</span></p>
                             <p>Provider Status: <span className="font-medium text-white">{deployment.status}</span></p>
+                            <p>AI Fix Pass: <span className="font-medium text-white">{data.aiFixSummary ? 'Applied' : 'Not applied'}</span></p>
+                            {data.aiFixSummary ? (
+                                <p>AI Summary: <span className="font-medium text-white">{data.aiFixSummary}</span></p>
+                            ) : null}
+                            {data.aiChangedFiles ? (
+                                <p>AI Changed Files: <span className="font-medium text-white">{data.aiChangedFiles}</span></p>
+                            ) : null}
                             <button onClick={() => setModalOpen(true)} className="mt-2 rounded-md border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-200">
                                 Error Explanation
                             </button>
@@ -150,6 +191,7 @@ export default function DeploymentDetailPage() {
             </section>
 
             <DiffViewer diff={data.diffPreview} />
+            {data.aiDiffPreview ? <DiffViewer diff={data.aiDiffPreview} /> : null}
             <LogViewer logs={data.logs} />
 
             <section className="rounded-xl border border-white/10 bg-[#11141a] p-4 text-xs text-white/60">

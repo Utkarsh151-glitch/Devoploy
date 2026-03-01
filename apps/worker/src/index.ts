@@ -2,6 +2,7 @@ import 'dotenv/config';
 
 import { cloneRepository } from './cloner/cloneRepo';
 import { analyzeRepository, applyFixes, revertRollbackPatch } from './engine/analyzeAndFix';
+import { runAiFixPass } from './engine/aiFixer';
 import { pushToBranch } from './bridge/githubPush';
 import { createDeploymentWorker } from './queue';
 import {
@@ -12,7 +13,7 @@ import {
 
 async function processDeployment(deploymentId: string): Promise<void> {
     let repoPath: string | null = null;
-    let rollbackPatchPath: string | null = null;
+    let rollbackPatchPaths: string[] = [];
     try {
         const deployment = await getDeploymentById(deploymentId);
         if (!deployment) {
@@ -49,7 +50,9 @@ async function processDeployment(deploymentId: string): Promise<void> {
         await updateDeploymentStatus(deploymentId, 'fixing');
         await appendDeploymentLog(deploymentId, `Applying ${deployment.target_cloud} fixes for ${analysis.stack}`);
         const fixResult = await applyFixes(repoPath, analysis, deployment.target_cloud);
-        rollbackPatchPath = fixResult.rollbackPatchPath;
+        if (fixResult.rollbackPatchPath) {
+            rollbackPatchPaths.push(fixResult.rollbackPatchPath);
+        }
         await appendDeploymentLog(deploymentId, `Changed files: ${fixResult.changedFiles.join(', ') || 'none'}`);
         if (fixResult.diffPreview && fixResult.diffPreview !== 'No changes required.') {
             await appendDeploymentLog(deploymentId, `Diff preview:\n${fixResult.diffPreview.slice(0, 8000)}`);
@@ -58,28 +61,54 @@ async function processDeployment(deploymentId: string): Promise<void> {
             await appendDeploymentLog(deploymentId, `Rollback patch: ${fixResult.rollbackPatchPath}`);
         }
 
+        const aiResult = await runAiFixPass(repoPath, analysis, fixResult.diffPreview);
+        if (!aiResult.enabled) {
+            await appendDeploymentLog(deploymentId, `AI fix pass skipped: ${aiResult.reason ?? 'disabled'}`, 'INFO');
+        } else if (!aiResult.applied) {
+            const noChangeReason = aiResult.reason ?? aiResult.summary ?? 'no-op';
+            await appendDeploymentLog(deploymentId, `AI fix pass finished with no changes: ${noChangeReason}`, 'INFO');
+        } else {
+            await appendDeploymentLog(deploymentId, `AI fix summary: ${aiResult.summary}`);
+            await appendDeploymentLog(deploymentId, `AI changed files: ${aiResult.changedFiles.join(', ')}`);
+            if (aiResult.diffPreview) {
+                await appendDeploymentLog(deploymentId, `AI diff preview:\n${aiResult.diffPreview.slice(0, 8000)}`);
+            }
+            if (aiResult.rollbackPatchPath) {
+                rollbackPatchPaths.push(aiResult.rollbackPatchPath);
+                await appendDeploymentLog(deploymentId, `AI rollback patch: ${aiResult.rollbackPatchPath}`);
+            }
+        }
+
         await updateDeploymentStatus(deploymentId, 'pushing');
         await appendDeploymentLog(deploymentId, 'Committing and pushing branch');
         const branch = `devoploy/${deploymentId}`;
-        await pushToBranch({
+        const pushResult = await pushToBranch({
             repoPath,
             targetRepoUrl: deployment.original_repo,
             branch,
             githubToken: process.env.GITHUB_TOKEN,
         });
+        await appendDeploymentLog(
+            deploymentId,
+            pushResult.usedFork
+                ? `Push fallback enabled: pushed to fork ${pushResult.pushedRepoUrl}`
+                : `Pushed to ${pushResult.pushedRepoUrl}`
+        );
 
         await updateDeploymentStatus(deploymentId, 'completed', {
             fixed_branch: branch,
-            fixed_repo_url: deployment.original_repo.replace(/\.git$/, '') + `/tree/${branch}`,
+            fixed_repo_url: pushResult.pushedRepoUrl,
             error_message: null,
         });
         await appendDeploymentLog(deploymentId, 'Deployment processing completed', 'SUCCESS');
         console.log(`=== Finished Deployment ${deploymentId} ===\n`);
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown worker error';
-        if (repoPath && rollbackPatchPath) {
-            await revertRollbackPatch(repoPath, rollbackPatchPath).catch(() => undefined);
-            await appendDeploymentLog(deploymentId, 'Rollback patch applied after failure', 'WARN').catch(() => undefined);
+        if (repoPath && rollbackPatchPaths.length > 0) {
+            for (const rollbackPatchPath of rollbackPatchPaths.reverse()) {
+                await revertRollbackPatch(repoPath, rollbackPatchPath).catch(() => undefined);
+            }
+            await appendDeploymentLog(deploymentId, 'Rollback patches applied after failure', 'WARN').catch(() => undefined);
         }
         await updateDeploymentStatus(deploymentId, 'failed', { error_message: message }).catch(() => undefined);
         await appendDeploymentLog(deploymentId, message, 'ERROR').catch(() => undefined);

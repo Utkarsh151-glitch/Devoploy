@@ -3,8 +3,8 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { runGitCommand } from '../git/runGitCommand';
 
-const MAX_RETRIES = 3;
-const CLONE_TIMEOUT_MS = 60_000;
+const MAX_RETRIES = Number(process.env.CLONE_MAX_RETRIES || '3');
+const CLONE_TIMEOUT_MS = Number(process.env.CLONE_TIMEOUT_MS || '60000');
 const RETRY_DELAYS_MS = [1000, 2000, 4000];
 
 export interface CloneAttemptLog {
@@ -62,7 +62,7 @@ export async function cloneRepository(
 
         try {
             const result = await runGitCommand({
-                args: ['clone', '--depth=1', '--single-branch', authenticatedUrl, '.'],
+                args: ['clone', '--depth=1', '--single-branch', '--no-tags', '--filter=blob:none', authenticatedUrl, '.'],
                 cwd: tmpDir,
                 timeoutMs: CLONE_TIMEOUT_MS,
             });

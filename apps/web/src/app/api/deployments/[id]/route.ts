@@ -10,10 +10,16 @@ export const runtime = 'nodejs';
 
 function extractFromLogs(logs: Array<{ message: string }>) {
     const diffLog = logs.find((log) => log.message.startsWith('Diff preview:\n'));
+    const aiDiffLog = logs.find((log) => log.message.startsWith('AI diff preview:\n'));
     const fixLog = logs.find((log) => log.message.startsWith('Applying '));
+    const aiSummaryLog = logs.find((log) => log.message.startsWith('AI fix summary: '));
+    const aiFilesLog = logs.find((log) => log.message.startsWith('AI changed files: '));
     return {
         diffPreview: diffLog ? diffLog.message.replace(/^Diff preview:\n/, '') : '',
+        aiDiffPreview: aiDiffLog ? aiDiffLog.message.replace(/^AI diff preview:\n/, '') : '',
         fixApplied: fixLog?.message ?? '',
+        aiFixSummary: aiSummaryLog ? aiSummaryLog.message.replace(/^AI fix summary:\s*/, '') : '',
+        aiChangedFiles: aiFilesLog ? aiFilesLog.message.replace(/^AI changed files:\s*/, '') : '',
     };
 }
 
@@ -38,6 +44,9 @@ export async function GET(_req: Request, context: { params: Promise<{ id: string
             analysis,
             diffPreview: extracted.diffPreview,
             fixApplied: extracted.fixApplied,
+            aiDiffPreview: extracted.aiDiffPreview,
+            aiFixSummary: extracted.aiFixSummary,
+            aiChangedFiles: extracted.aiChangedFiles,
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown deployment detail error';

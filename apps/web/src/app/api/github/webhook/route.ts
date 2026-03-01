@@ -15,7 +15,7 @@ import {
     getWebhookVerifier,
     type WorkflowRunContext,
 } from '@/lib/githubApp';
-import { getDeploymentProvider, waitForDeployment } from '@/lib/deploy/providers';
+import { executeProviderDeployment } from '@/lib/deploy/execute';
 import { generateContextualFixSuggestion, retrieveDocumentationContext } from '@/lib/rag/pipeline';
 
 export const runtime = 'nodejs';
@@ -195,43 +195,37 @@ async function handlePullRequest(payload: PullRequestPayload, delivery: string) 
         return NextResponse.json({ ok: true, ignored: true, reason: 'already deployed' });
     }
 
-    await updateDeploymentStatus(deployment.id, 'deploying');
-    await appendDeploymentLog(deployment.id, 'Triggering Vercel deployment after PR merge');
-
-    try {
-        const provider = getDeploymentProvider('vercel');
-        const repoSlug = extractRepoSlug(deployment.original_repo);
-        const triggered = await provider.trigger({
-            gitRepository: repoSlug,
-            gitBranch: payload.pull_request.base.ref,
-            commitSha: payload.pull_request.merge_commit_sha,
-        });
-
+    const autoDeployEnabled = String(process.env.AUTO_DEPLOY_ON_PR_MERGE || '').toLowerCase() === 'true';
+    if (!autoDeployEnabled) {
         await appendDeploymentLog(
             deployment.id,
-            `Vercel deployment triggered: ${triggered.providerDeploymentId} ${triggered.providerUrl ?? ''}`.trim()
+            'PR merged; auto deploy is disabled. Trigger deployment from dashboard Deploy button.',
+            'INFO'
         );
+        return NextResponse.json({
+            ok: true,
+            delivery,
+            deploymentId: deployment.id,
+            ignored: true,
+            reason: 'auto deploy disabled',
+        });
+    }
 
-        const polled = await waitForDeployment(provider, triggered.providerDeploymentId);
-        if (polled.state === 'ready') {
-            await updateDeploymentStatus(deployment.id, 'deployed', {
-                live_deployment_url: polled.providerUrl ?? triggered.providerUrl ?? null,
-                error_message: null,
-            });
-            await appendDeploymentLog(deployment.id, 'Vercel deployment completed successfully', 'SUCCESS');
-        } else {
-            await updateDeploymentStatus(deployment.id, 'deployment_failed', {
-                error_message: `Vercel deployment ended in ${polled.state}`,
-            });
-            await appendDeploymentLog(deployment.id, `Vercel deployment failed: ${polled.state}`, 'ERROR');
-        }
+    try {
+        const result = await executeProviderDeployment({
+            deploymentId: deployment.id,
+            targetCloud: deployment.target_cloud,
+            repoUrl: deployment.original_repo,
+            sourceBranch: payload.pull_request.base.ref,
+            commitSha: payload.pull_request.merge_commit_sha,
+        });
 
         return NextResponse.json({
             ok: true,
             delivery,
             deploymentId: deployment.id,
-            deploymentState: polled.state,
-            deploymentUrl: polled.providerUrl ?? triggered.providerUrl,
+            deploymentState: result.deploymentState,
+            deploymentUrl: result.deploymentUrl,
         });
     } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Unknown deployment provider error';
@@ -244,11 +238,4 @@ async function handlePullRequest(payload: PullRequestPayload, delivery: string) 
 function extractDeploymentIdFromBranch(branch: string): string | null {
     const match = branch.match(/^devoploy\/([a-f0-9-]{36})$/i);
     return match?.[1] ?? null;
-}
-
-function extractRepoSlug(repoUrl: string): string {
-    const cleaned = repoUrl.replace(/\.git$/, '');
-    const httpsMatch = cleaned.match(/github\.com[:/](.+\/.+)$/i);
-    if (httpsMatch) return httpsMatch[1];
-    throw new Error(`Unsupported GitHub repository URL: ${repoUrl}`);
 }
